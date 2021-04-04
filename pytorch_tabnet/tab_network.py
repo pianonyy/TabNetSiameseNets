@@ -3,6 +3,7 @@ from torch.nn import Linear, BatchNorm1d, ReLU
 import numpy as np
 from pytorch_tabnet import sparsemax
 import torch.nn as nn
+import torch.nn.functional as F
 
 def initialize_non_glu(module, input_dim, output_dim):
     gain_value = np.sqrt((input_dim + output_dim) / np.sqrt(4 * input_dim))
@@ -460,21 +461,26 @@ class TabNetNoEmbeddings(torch.nn.Module):
                 initialize_non_glu(task_mapping, n_d, task_dim)
                 self.multi_task_mappings.append(task_mapping)
         else:
-            self.final_mapping = Linear(n_d+1, output_dim, bias=False)
-            initialize_non_glu(self.final_mapping, n_d, output_dim)
+            self.fc1 = nn.Linear(n_d+1, (n_d+1)-3)
+            self.fc2 = nn.Linear((n_d+1) -3, (n_d+1)-5)
+            self.final_mapping = Linear((n_d+1)-5, 1, bias=False)  # output_dim second parameter
+            initialize_non_glu(self.final_mapping, n_d, 1) # output_dim second parameter
+        
 
     def forward(self, x):
         res = 0
         steps_output, M_loss = self.encoder(x)
         res = torch.sum(torch.stack(steps_output, dim=0), dim=0)
 
-
+        
         zeros = torch.zeros(res.shape[0])
         ones = torch.ones(res.shape[0])
 
         zeros = torch.unsqueeze(zeros, 1)
         ones = torch.unsqueeze(ones, 1)
 
+        res_0 = torch.cat((res, zeros), dim = 1)
+        res_1 = torch.cat((res, ones), dim = 1)
 
         if self.is_multi_task:
             # Result will be in list format
@@ -485,19 +491,37 @@ class TabNetNoEmbeddings(torch.nn.Module):
             # print('res',res.shape)
             # print('res',type(res))
             # print('res',res)
+            # print("res_0_shape_after_selection", res_0.shape,res_0)
+            
+            res_0 = F.relu(self.fc1(res_0))
+            res_0 = F.relu(self.fc2(res_0))
+            res_0 = self.final_mapping(res_0)
+            m = nn.Sigmoid()
+            out_0 = m(res_0)
 
-            out_0 = self.final_mapping(torch.cat((res, zeros), dim = 1) )
-            out_1 = self.final_mapping(torch.cat((res, ones), dim = 1) )
+            # print("res_1_shape_after_selection", res_1.shape,res_1)
+            
+            res_1 = F.relu(self.fc1(res_1))
+            res_1 = F.relu(self.fc2(res_1))
+            res_1 = self.final_mapping(res_1)
+            m = nn.Sigmoid()
+            out_1 = m(res_1)
 
-            m = nn.Softmax(dim=1)
-            out_1 = m(out_1)
-            out_0 = m(out_0)
+            
+            out = out_1 - out_0
+            # out_0 = self.final_mapping(torch.cat((res, zeros), dim = 1) )
+            # out_1 = self.final_mapping(torch.cat((res, ones), dim = 1) )
 
-            out = out_1[:,1] - out_0[:,1]
-            # print('out',out.shape)
-            # print('out',type(out))
-            # print('out',out)
-        return out, M_loss
+            # m = nn.Softmax(dim=1)
+            # out_1 = m(out_1)
+            # out_0 = m(out_0)
+
+            # out = out_1[:,1] - out_0[:,1]
+            # print('out_1',out_1.shape,out_1)
+            # print('out_0',out_0.shape,out_0)
+            # print('out',out.shape, out)
+            
+        return out, M_loss, out_1, out_0
 
     def forward_masks(self, x):
         return self.encoder.forward_masks(x)

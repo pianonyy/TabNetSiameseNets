@@ -100,12 +100,12 @@ class TabNetClassifier(TabModel):
         for batch_nb, data in enumerate(dataloader):
             data = data.to(self.device).float()
 
-            output, M_loss = self.network(data)
+            output, M_loss,mu1,mu0 = self.network(data)
             # predictions = torch.nn.Sigmoid(dim=1)(output).cpu().detach().numpy()
 
-            print(output)
-            print(output.shape)
-            print(type(output))
+            # print(output)
+            # print(output.shape)
+            # print(type(output))
 
             predictions = output.cpu().detach().numpy()
             results.append(predictions)

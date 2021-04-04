@@ -115,6 +115,7 @@ class TabModel(BaseEstimator):
         batch_size=1024,
         virtual_batch_size=128,
         num_workers=0,
+        alpha = 0.3,
         drop_last=False,
         callbacks=None,
         pin_memory=True,
@@ -170,6 +171,7 @@ class TabModel(BaseEstimator):
         self.batch_size = batch_size
         self.virtual_batch_size = virtual_batch_size
         self.num_workers = num_workers
+        self.alpha = alpha
         self.drop_last = drop_last
         self.input_dim = X_train.shape[1]
         self._stop_training = False
@@ -468,25 +470,37 @@ class TabModel(BaseEstimator):
         y = y.to(self.device).float()
 
         
+
         t = t.to(self.device).float()
 
 
         for param in self.network.parameters():
             param.grad = None
 
-        output, M_loss = self.network(X)
-
+        output, M_loss, mu1, mu0 = self.network(X) 
+        # возвращает предсказанный uplift, значение функции потерь от важности признаков, 
+        # предсказанные уровни реакций в treatment и control группах  
+        
         ones = np.ones(shape = size)
         ones = torch.from_numpy(ones).float()
+
+        mu0 = torch.reshape(mu0, shape = (-1,))
+        mu1 = torch.reshape(mu1, shape =(-1,) )
+        output = torch.reshape(output, shape = (-1,))
+
+        Y_obs = t * mu1 + (ones - t) * mu0 # наблюдаемая реакция после прогона сети
         
         trans_2 = torch.where( ((t == 1) & (y == 1)), 2.0, 0.0 )
         trans_not2 = torch.where( ((t == 0) & (y == 1)), -2.0, 0.0)
-        Z_trans = (trans_2 + trans_not2)
+        Z_trans = (trans_2 + trans_not2) # измененный таргет, имеющий смысл целевой переменной uplift
 
         loss_MSE = nn.MSELoss()
-        # loss = self.compute_loss(output, y)
-        loss = torch.mean( loss_MSE(Z_trans, output) )
+        loss_BCE = nn.BCELoss(reduction = 'mean')
 
+        # loss = self.compute_loss(output, y)
+        
+        loss = torch.mean( (1-self.alpha) * loss_MSE(Z_trans, output) + self.alpha * loss_BCE(Y_obs,y) )
+        
         # Add the overall sparsity loss
         loss -= self.lambda_sparse * M_loss
 
